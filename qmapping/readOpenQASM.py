@@ -12,8 +12,7 @@ from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGCircuit, DAGOpNode, DAGInNode
 from qiskit.providers.fake_provider import FakeAlmaden, FakeSydney, FakeManhattan, FakeTokyo
 from qiskit.transpiler import CouplingMap
-from qiskit.visualization import dag_drawer, circuit_drawer
-
+from dagDrawer import dag_drawer
 
 def makedir(filename):
     new_path = os.path.join("./subdags/", filename)
@@ -43,12 +42,26 @@ def check_cycle(subdag: DAGCircuit, node: DAGOpNode) -> bool:
 def read_open_qasm(path: string, filename) -> QuantumCircuit:
     circuit = QuantumCircuit.from_qasm_file(path)
     dag = circuit_to_dag(circuit)
-    dag_drawer(dag,scale=0.7,filename="./dags/"+filename.split(".")[0]+".png", style="color")
+    dag_drawer(dag, scale=0.7, filename="./dags/" + filename.split(".")[0] + ".png", style="color")
+    # construct the fisrt interaction graph
+    IG = list()
+    for node in dag.topological_op_nodes():
+        if len(node.qargs) == 2:
+            for ig in IG:
+                if node.qargs[0].index in ig and node.qargs[1].index in ig:
+                    continue
+            IG.append([node.qargs[0].index, node.qargs[1].index])
+    for node in dag.topological_op_nodes():
+        if len(node.qargs) == 1:
+            for ig in IG:
+                if node.qargs[0].index in ig:
+                    continue
+            IG.append([node.qargs[0].index])
     dags = circuit_partition(dag, filename)
     # print(dag.to_networkx())
     generic_graph_view(dag.to_networkx())
     # print(circuit_drawer(circuit))
-    return dags
+    return IG, dags
 
 
 def count_iterable(i):
@@ -106,8 +119,9 @@ def circuit_partition(dag: DAGCircuit, filename):
                 continue
 
     dag_drawer(subdag, scale=0.7, filename=makedir(filename) + "/" + str(len(dags)) + ".png", style="color")
+    dags.append(subdag)
     sub_node_count += len(revisited_nodes)
-    print("subdag node:", sub_node_count, dag_node_count - sub_node_count )
+    print("subdag node:", sub_node_count, dag_node_count - sub_node_count)
     # if dag_node_count - sub_node_count - 48 != 0:
     #     exit(-999999)
     return dags
@@ -130,10 +144,10 @@ def configuration(conf):
 
 
 # 计算节点的度 邻接矩阵
-def degree_adjcent_matrix(cm: CouplingMap):
-    deg = [0 for i in cm.physical_qubits]
-    matrix = [[0 for i in cm.physical_qubits] for j in cm.physical_qubits]
-    for e in cm.get_edges():
+def degree_adjcent_matrix(cm: list, n: int):
+    deg = [0 for i in range(n)]
+    matrix = [[0 for i in range(n)] for j in range(n)]
+    for e in cm:
         matrix[e[0]][e[1]] += 1
         deg[e[0]] += 1
         deg[e[1]] += 1
@@ -146,7 +160,7 @@ def degree_adjcent_matrix(cm: CouplingMap):
 def initial_mapping(dag: DAGCircuit):
     conf, prop = configuration("sydney")
     cm = CouplingMap(conf.coupling_map)
-    phy_deg = degree_adjcent_matrix(cm)
+    phy_deg = degree_adjcent_matrix(conf.coupling_map, len(cm.physical_qubits))
     dag.topological_op_nodes()
     pass
 
@@ -158,8 +172,9 @@ if __name__ == '__main__':
     files = sorted(files)
     count = 0
     for path in files:
-        print(count, path)
+        print("the %d-th circuit: %s" % (count, path))
         count += 1
         dags = read_open_qasm("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/" + path, path)
+        pass
         # for dag in dags:
         #     initial_mapping(dag)
