@@ -138,20 +138,15 @@ def get_the_nonzero_index(row):
 
 
 # N:每一行交换的次数
-def matrix_norm_n_add(S: list, X: list, N: list):
-    for s in S:
-        r1 = get_the_nonzero_index(X[s[0]])
-        r2 = get_the_nonzero_index(X[s[1]])
-        # swap  the row of s[0] and s[1] and r1 (r2) is the indexes of nonzeo entry,
-        # we let each element of r1 and r2  add the variable x_i and the indexes of r2 (resp. r1) in row s[0] (resp. s[1]) add x_j
-        v1, v2 = generate_boolean_variables(2)
-        N[s[0]] += 1
-        N[s[1]] += 1
-        for i in range(r1):
-            row1 = (X[s[0]][i] + v2) / N[s[0]]
-            row2 = (X[s[1]][i] + v1) / N[s[1]]
-            X[s[0]][i] = ((X[s[0]] + v1) / N[s[0]])+row2
-            X[s[1]] = (X[s[1]] + v1) / N[s[1]]
+def matrix_norm_n_add(s, X: list):
+    # swap  the row of s[0] and s[1] and r1 (r2) is the indexes of nonzeo entry,
+    # we let each element of r1 and r2  add the variable x_i and the indexes of r2 (resp. r1) in row s[0] (resp. s[1]) add x_j
+    v1, v2 = generate_boolean_variables(2)
+    for i in range(len(X[s[0]])):
+        row1 = (X[s[0]][i] + v2) / 2
+        row2 = (X[s[1]][i] + v2) / 2
+        X[s[0]][i] = ((X[s[0]][i] + v1) / 2) + row2
+        X[s[1]][i] = ((X[s[1]][i] + v1) / 2) + row1
 
 
 def MatrixMulti(S: list, X: list):
@@ -425,7 +420,7 @@ def build_constraint(P: list, coupling_map: list, dag: DAGCircuit, param):
                         for i in range(len(s)):
                             # print("swap: ", s[i])
                             # print("X: ", X)
-                            X = MatrixMulti(s[i], X)
+                            X = matrix_norm_n_add(s[i], X)
                             # insert the swap gate into the gate sequence
                             s1 = GateInfo(node.op.name, [C[j][1][i][0], C[j][1][i][1]], S[j].var1)
                             all_gates.append(s1)
@@ -437,7 +432,7 @@ def build_constraint(P: list, coupling_map: list, dag: DAGCircuit, param):
                         # one of the path: the qubits node.qargs mapped to the adjacent qubits S[j].edge,
                         # Only one path of all paths is true sum(v1s)==1
                         constraints.append(
-                            X[S[j].edge[0]][node.qargs[0].index] * X[S[j].edge[1]][node.qargs[1].index] == S[j].var1)
+                            X[S[j].edge[0]][node.qargs[0].index] + X[S[j].edge[1]][node.qargs[1].index] == S[j].var1)
                         all_gates.append(GateInfo(node.op.name, [S[j].edge[0], S[j].edge[1]], S[j].var1))
                         R.append([X, all_gates])
             else:
