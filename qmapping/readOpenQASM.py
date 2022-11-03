@@ -14,6 +14,7 @@ from qiskit.providers.fake_provider import FakeAlmaden, FakeSydney, FakeManhatta
 from qiskit.transpiler import CouplingMap
 from dagDrawer import dag_drawer
 
+
 def makedir(filename):
     new_path = os.path.join("./subdags/", filename)
     if not os.path.isdir(new_path):
@@ -43,6 +44,16 @@ def read_open_qasm(path: string, filename) -> QuantumCircuit:
     circuit = QuantumCircuit.from_qasm_file(path)
     dag = circuit_to_dag(circuit)
     dag_drawer(dag, scale=0.7, filename="./dags/" + filename.split(".")[0] + ".png", style="color")
+    dag_qubits = set()
+    all_qubits = list()
+    arch = "manhattan"
+    conf, prop = configuration(arch)
+    cm = CouplingMap(conf.coupling_map)
+    for q in dag.qubits:
+        dag_qubits.add(q.index)
+    for i in range(len(cm.physical_qubits)):
+        if not i in dag_qubits:
+            all_qubits.append([i])
     # construct the fisrt interaction graph
     IG = list()
     for node in dag.topological_op_nodes():
@@ -57,11 +68,12 @@ def read_open_qasm(path: string, filename) -> QuantumCircuit:
                 if node.qargs[0].index in ig:
                     continue
             IG.append([node.qargs[0].index])
-    dags = circuit_partition(dag, filename)
-    # print(dag.to_networkx())
-    generic_graph_view(dag.to_networkx())
+    IG.extend(all_qubits)
+    # dags = circuit_partition(dag, filename)
+    # # print(dag.to_networkx())
+    # generic_graph_view(dag.to_networkx())
     # print(circuit_drawer(circuit))
-    return IG, dags
+    return dag, IG
 
 
 def count_iterable(i):
@@ -135,7 +147,7 @@ def configuration(conf):
         return conf, prop
     elif conf == "manhattan":
         conf = FakeManhattan().configuration()
-        prop = FakeSydney().properties()
+        prop = FakeManhattan().properties()
         return conf, prop
     elif conf == "tokyo":
         conf = FakeTokyo().configuration()

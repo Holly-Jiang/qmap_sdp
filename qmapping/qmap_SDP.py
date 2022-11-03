@@ -33,6 +33,18 @@ from qiskit.transpiler import CouplingMap
 from readOpenQASM import configuration, degree_adjcent_matrix, read_open_qasm
 
 
+class Entry:
+    def __init__(self, vars):
+        self.vars = vars
+
+
+class Path:
+    def __init__(self, path, dst, vars):
+        self.path = path
+        self.dst = dst
+        self.vars = vars
+
+
 class SwapInfo:
     def __init__(self, edge, swaps, var1, var2):
         self.edge = edge
@@ -121,10 +133,9 @@ class ShortPath:
 # 在每一个门前面都需要插入所有的交换可能性，然后搜索所有的交换排列能够达到A
 
 class GateInfo:
-    def __init__(self, name: string, qargs: list, var=None):
+    def __init__(self, name: string, qargs: list):
         self.name = name
         self.qargs = qargs
-        self.var = var
 
 
 def get_the_nonzero_index(row):
@@ -138,39 +149,51 @@ def get_the_nonzero_index(row):
 
 
 # N:每一行交换的次数
-def matrix_norm_n_add(s, X: list):
+def matrix_norm_n_add(s, x: list):
     # swap  the row of s[0] and s[1] and r1 (r2) is the indexes of nonzeo entry,
     # we let each element of r1 and r2  add the variable x_i and the indexes of r2 (resp. r1) in row s[0] (resp. s[1]) add x_j
     v1, v2 = generate_boolean_variables(2)
-    for i in range(len(X[s[0]])):
-        row1 = (X[s[0]][i] + v2) / 2
-        row2 = (X[s[1]][i] + v2) / 2
-        X[s[0]][i] = ((X[s[0]][i] + v1) / 2) + row2
-        X[s[1]][i] = ((X[s[1]][i] + v1) / 2) + row1
-    return X
+    for i in range(len(x[s[0]])):
+        row1 = (x[s[0]][i] + v2) / 2
+        row2 = (x[s[1]][i] + v2) / 2
+        x[s[0]][i] = ((x[s[0]][i] + v1) / 2) + row2
+        x[s[1]][i] = ((x[s[1]][i] + v1) / 2) + row1
+    return x
 
 
-def matrix_add(s, X: list):
-    for i in range(len(X[s[0]])):
-        row1 = X[s[0]][i]
-        X[s[0]][i] = X[s[1]][i]
-        X[s[1]][i] = row1
-    return X
+def matrix_row_swap(s, x: list, y: list):
+    for i in range(len(x[s[0]])):
+        row1 = x[s[0]][i]
+        x[s[0]][i] = x[s[1]][i]
+        x[s[1]][i] = row1
+
+        row1 = y[s[0]][i]
+        y[s[0]][i] = y[s[1]][i]
+        y[s[1]][i] = row1
+    return x, y
 
 
-def MatrixMulti(S: list, X: list):
+def matrix_add(x1: list, y1: list, x2: list, y2: list):
+    for i in range(len(x1)):
+        for j in range(len(x1[i])):
+            x1[i][j] += x2[i][j]
+            y1[i][j].union(y2[i][j])
+    return x1, y1
+
+
+def MatrixMulti(S: list, x: list):
     M = [[0 for i in range(len(S))] for j in range(len(S))]
     for i in range(len(S)):
-        for j in range(len(X)):
+        for j in range(len(x)):
             for k in range(len(S[i])):
-                if (isinstance(S[i][k], int) and S[i][k] == 0) or (isinstance(X[k][j], int) and X[k][j] == 0):
+                if (isinstance(S[i][k], int) and S[i][k] == 0) or (isinstance(x[k][j], int) and x[k][j] == 0):
                     pass
                 elif isinstance(S[i][k], int) and S[i][k] == 1:
-                    M[i][j] += X[k][j]
-                elif isinstance(X[k][j], int) and X[k][j] == 1:
+                    M[i][j] += x[k][j]
+                elif isinstance(x[k][j], int) and x[k][j] == 1:
                     M[i][j] += S[i][k]
                 else:
-                    M[i][j] += S[i][k] * X[k][j]
+                    M[i][j] += S[i][k] * x[k][j]
     return M
 
 
@@ -181,17 +204,20 @@ def build_coupling_constraint(coupling: list, n: list):
     return constraints
 
 
-def build_unique_constraints(X: list, constraints, param):
+def build_unique_constraints(x: list, constraints, param):
     i = 0
-    while i < len(X):
+    while i < len(x):
         j = 0
         row = 0
         col = 0
-        # variables are integer, if we want to X[i] !=X[i+1], the abs of them is >0, then >=1
+        # variables are integer, if we want to x[i] !=x[i+1], the abs of them is >0, then >=1
         # cvxpy limit the strict > <
-        while j < len(X):
-            row += X[i][j]
-            col += X[j][i]
+        while j < len(x):
+            if not isinstance(x[i][j], int):
+                # print(i, j)
+                pass
+            row += x[i][j]
+            col += x[j][i]
             j += 1
         if (isinstance(row, int) and row > 1) or (not isinstance(row, int)):
             constraints.extend([row <= param])
@@ -202,14 +228,14 @@ def build_unique_constraints(X: list, constraints, param):
 
 
 # the node in the shortest path
-# def generate_candidate_set(dist, node: DAGOpNode, X: list):
+# def generate_candidate_set(dist, node: DAGOpNode, x: list):
 #     res = list()
 #     # map the logical qubits to physical qubits
 #     # qubits = list()
 #     # for q in dag.qubits:
-#     #     qubits.append(X[q])
-#     print(X[node.qargs[0].index][0], X[node.qargs[1].index][0])
-#     path = dist[X[node.qargs[0].index][0]][X[node.qargs[1].index][0]].paths
+#     #     qubits.append(x[q])
+#     print(x[node.qargs[0].index][0], x[node.qargs[1].index][0])
+#     path = dist[x[node.qargs[0].index][0]][x[node.qargs[1].index][0]].paths
 #     print(path)
 #     for c in path:
 #         for k in c:
@@ -218,95 +244,92 @@ def build_unique_constraints(X: list, constraints, param):
 #         #     res.append(c)
 #     return res
 
-def generate_candidate_set(coupling_map: list, dag: DAGCircuit, X):
-    res = list()
-    # map the logical qubits to physical qubits
-    qubits = set()
-    for q in dag.qubits:
-        qubits.add(L2PP(X, q.index))
-    for c in coupling_map:
-        if c[0] in qubits or c[1] in qubits:
-            flag = False
-            for k in res:
-                if (c[0] == k[0] and c[1] == k[1]) or (c[0] == k[1] and c[1] == k[0]):
-                    flag = True
-                    break
-            if not flag:
-                res.append(c)
-    return res
-
 
 # initial mapping
 # give the logical qubit, return the mapped physical qubit
-def L2P(X: list, q: int):
-    for i in range(len(X)):
-        if isinstance(X[i][q], int) and X[i][q] != 0:
+def L2P(x: list, q: int):
+    for i in range(len(x)):
+        if isinstance(x[i][q], int) and x[i][q] != 0:
             return i
-        elif not isinstance(X[i][q], int):
+        elif not isinstance(x[i][q], int):
             return None
     pass
 
 
 # give the logical qubit, return the mapped physical qubit
-def L2PP(X: list, q: int, param=None, constraints=None):
+def L2PP(x: list, q: int):
     phy_var = list()
-    var = list()
-    for i in range(len(X)):
-        if isinstance(X[i][q], int) and X[i][q] != 0:
-            if not constraints is None:
-                var.append(cp.Variable(boolean=True))
-                constraints.append(var[0] == param)
-            return [i], var
-        elif not isinstance(X[i][q], int):
+    for i in range(len(x)):
+        if isinstance(x[i][q], int) and x[i][q] != 0:
+            return [i]
+        elif not isinstance(x[i][q], int):
             phy_var.append(i)
-            v = cp.Variable(boolean=True)
-            constraints.append(X[i][q] == v)
-            var.append(v)
-    return phy_var, var
+    return phy_var
 
 
-def P2L(X: list, q: int):
-    for i in range(len(X)):
-        if X[q][i] == 1:
+def P2L(x: list, q: int):
+    for i in range(len(x)):
+        if x[q][i] == 1:
             return i
 
 
-def generate_shortest_path_list(dist: list, gate: list, coupling_map: list):
+# find  all the paths and
+def generate_shortest_path_list(dist: list, edges: list, nodes: list, y: list, coupling_map: list, limit):
     res = list()
-    # 超过总长度>5的路径prune
-    limit = 6
-    for c in coupling_map:
-        # move the qubit gate[0] to the qubit c[0]
-        m1 = dist[gate[0]][c[0]]
-        m2 = dist[gate[1]][c[1]]
-        m3 = dist[gate[0]][c[1]]
-        m4 = dist[gate[1]][c[0]]
-
-        if m1.distance + m2.distance < m3.distance + m4.distance:
-            if m1.distance + m2.distance > limit:
+    # 超过总长度>2的路径prune
+    vars = list()
+    for edge in edges:
+        for c in coupling_map:
+            # move the qubit gate[0] to the qubit c[0]
+            m1 = dist[edge[0]][c[0]]
+            m2 = dist[edge[1]][c[1]]
+            # m3 = dist[edge[0]][c[1]]
+            # m4 = dist[edge[1]][c[0]]
+            vs = list()
+            vs.extend(y[nodes[0].index][edge[0]])
+            vs.extend(y[nodes[1].index][edge[1]])
+            # if m1.distance + m2.distance < m3.distance + m4.distance:
+            n1 = m1
+            n2 = m2
+            target = [c[0], c[1]]
+            # else:
+            #     n1 = m3
+            #     n2 = m4
+            #     target = [c[1], c[0]]
+            if n1.distance + n2.distance > limit:
                 continue
-            for p in m1.paths:
-                for q in m2.paths:
+            if len(n1.paths) == 0 and len(n2.paths) == 0:
+                v = cp.Variable(boolean=True)
+                vs.append(v)
+                vars.append(v)
+                res.append(Path([], target, vs))
+            elif len(n1.paths) == 0:
+                for q in n2.paths:
+                    v = cp.Variable(boolean=True)
+                    vs.append(v)
+                    vars.append(v)
+                    res.append(Path(q, target, vs))
+            elif len(n2.paths) == 0:
+                for q in m1.paths:
+                    v = cp.Variable(boolean=True)
+                    vs.append(v)
+                    vars.append(v)
+                    res.append(Path(q, target, vs))
+            for p in n1.paths:
+                for q in n2.paths:
                     s = list()
                     s.extend(p)
                     s.extend(q)
-                    res.append([[c[0], c[1]], s])
-
-        else:
-            if m3.distance + m4.distance > limit:
-                continue
-            for p in m3.paths:
-                for q in m4.paths:
-                    s = list()
-                    s.extend(p)
-                    s.extend(q)
-                    res.append([[c[1], c[0]], s])
-    return res
+                    v = cp.Variable(boolean=True)
+                    vs.append(v)
+                    vars.append(v)
+                    res.append(Path(s, target, vs))
+    return res, vars
 
 
-def matrix_deepcopy(X):
+def matrix_deepcopy(x):
     res = list()
-    for i in X:
+    for i in x:
         r = list()
         for j in i:
             r.append(j)
@@ -314,43 +337,32 @@ def matrix_deepcopy(X):
     return res
 
 
-def gateInfo_deepcopy(all_gates):
-    res = list()
-    for g in all_gates:
-        g1 = GateInfo(g.name, g.qargs, g.var)
-        res.append(g1)
-    return res
-
-
-def generate_multi_phy_qubit(X, qargs, param, constraints):
+def generate_multi_phy_qubit(x, qargs):
     if len(qargs) == 2:
-        q1, v1 = L2PP(X, qargs[0].index, param, constraints)
-        q2, v2 = L2PP(X, qargs[1].index, param, constraints)
+        q1 = L2PP(x, qargs[0].index)
+        q2 = L2PP(x, qargs[1].index)
         res = list()
-        sum1 = 0
         for i in range(len(q1)):
-            sum1 += v1[i]
             for j in range(len(q2)):
                 if q1[i] != q2[j]:
-                    # physical qubit list, control var1 list, target var2 list
-                    res.append([[q1[i], q2[j]], v1[i], v2[j]])
+                    # physical qubit list
+                    res.append([q1[i], q2[j]])
     else:
-        # physical qubit list, var list
-        res = L2PP(X, qargs[0].index)
-
+        # physical qubit list
+        res = L2PP(x, qargs[0].index)
     return res
 
 
 def generate_multi_edges(P, qargs, constraint: list, param):
     vars = list()
     for i in range(len(P)):
-        X = P[i][0]
+        x = P[i][0]
         for q in qargs:
-            for j in range(len(X)):
-                if X[j][q] != 0:
+            for j in range(len(x)):
+                if x[j][q] != 0:
                     v = cp.Variable(boolean=True)
                     vars.append(v)
-                    constraint.append(X[j][q] == v)
+                    constraint.append(x[j][q] == v)
     sum = 0
     for v in vars:
         sum += v
@@ -358,122 +370,101 @@ def generate_multi_edges(P, qargs, constraint: list, param):
     return vars
 
 
-def build_constraint(P: list, coupling_map: list, dag: DAGCircuit, param):
+def matrix_add_var(x1: list, y1: list, v1, vars):
+    for i in range(len(x1)):
+        for j in range(len(x1[i])):
+            if isinstance(x1[i][j], int) and x1[i][j] != 0:
+                x1[i][j] = (x1[i][j] + v1) / 2
+                y1[i][j] = y1[i][j] | set(vars)
+    return x1, y1
+
+
+def binary_add(n, params: list):
+    res = list()
+    all = cp.power(2, n)
+    for i in range(int(all.value.min())):
+        res.append(list(params))
+        params = list(params)
+        params[n - 1] += 1
+        for j in range(n - 1, 0, -1):
+            if params[j] == 2:
+                if j > 0:
+                    params[j - 1] += 1
+                params[j] = 0
+            else:
+                break
+    return res
+
+
+def mod(vars: list):
+    n = len(vars)
+    params = [0] * n
+    z = binary_add(n, params)
+    f = 0
+    for z1 in z:
+        z2 = 0
+        for z3 in z1:
+            z2 += z3
+        f += cp.power(-1, z2 + cp.hstack(z1) * cp.vstack(vars))
+    return f
+
+
+def build_constraint(x: list, y: list, coupling_map: list, dag: DAGCircuit, param):
+    obj = 0
     # param denote the constant 1
-    # X: index is logical qubit, and the value is the corresponding physical qubit, default to -1
-    # Y: index is physical qubit, and the value is the corresponding logical qubit, default to -1
+    # x: the row index is physical qubit, and the columm index is the corresponding local qubit, default to -1
+    # y: each entry is the variables list related to x
     # 假设有物理比特一样数目的逻辑比特
     vars = list()
-    # The qubits of a gate in the list "all_gate" are the physical qubits
+    allpath = list()
     constraints = []
-    # for all i in range(X), X[i]!=-1 and
-    # if X[i]==j for all k!=i and k in range(X) X[k]!=j
-    # build_unique_constraints(X, constraints) todo
-    dist = build_dist_table_tabu(len(P[0][0]), coupling_map)
-
-    # physical coupling constraint:
-    # coupling_const = build_coupling_constraint(coupling=coupling_map, n=len(X))
-
-    # C = generate_candidate_set(coupling_map, dag, X)
+    dist = build_dist_table_tabu(len(x), coupling_map)
     # 编码门的顺序 在当前映射下门能执行门，再看下一个门
     # iterate the gate ordered by the topological order
     # if the two mapped physical qubit adjcent, the gate can be executed
     # todo prune
     # the neighbor of all physical node of dag
     for node in dag.topological_op_nodes():
-        R = list()
-        v1s = list()
-        print(node.name, node.qargs)
-        print(len(P))
-        # generate the node.qargs mapping probability
-        ve1 = list()
-        ve2 = list()
-        for p in range(len(P)):
-            print("The %s-th mapping:" % p)
-            X = P[p][0]
-            all_gates = P[p][1]
-            # the mapping result of each path P
-            if len(node.qargs) == 2:
-                edges = generate_multi_phy_qubit(X, node.qargs, param, constraints)
-                for edge in edges:
-                    ve1.append(edge[1])
-                    ve2.append(edge[2])
-                    # generate the shortest path list [[[],[],[]][[],[],[]]]
-                    d = dist[edge[0][0]][edge[0][1]]
-                    if d.distance == 3:
-                        v1s.append(edge[1] * edge[2])
-                        X = matrix_deepcopy(P[p][0])
-                        all_gates = gateInfo_deepcopy(P[p][1])
-                        all_gates.append(GateInfo(node.op.name, [edge[0][0], edge[0][1]], edge[1] * edge[2]))
-                        R.append([X, all_gates])
-                        break
-                    C = generate_shortest_path_list(dist, edge[0], coupling_map)
-                    # 增加SWAP门集S，使得所有的门都可以执行
-                    # 在每一个门前都有所有的交换候选集C，长度最长是耦合图的最长路径
-                    # todo prune
-                    # 用一个矩阵M表示如果交换(x,y)则将矩阵M_{xy}==第几次交换，矩阵能交换的为0不能交换的-1
-                    # 禁忌策略：最近交换过的边不要再交换回去，todo 如果遇到禁忌策略回退
-                    # 最坏情况：最长路径l*边条数e个变量-》每次选择邻接
-                    # S[j]：一条路径的变换包括[目标位置，]
-                    # c[2]: the number of Swaps
-                    # c[3]: the number of identity matrices
-                    S = generate_variables_matrix(len(X), C, edge[1] * edge[2])
-                    for j in range(len(S)):
-                        # variables sum(v1s)==1
-                        v1s.append(S[j].var1)
-                        X = matrix_deepcopy(P[p][0])
-                        all_gates = gateInfo_deepcopy(P[p][1])
-                        vars.append(S[j].var1)
-                        vars.append(S[j].var2)
-                        s = S[j].swaps
-                        for i in range(len(s)):
-                            # print("swap: ", s[i])
-                            # print("X: ", X)
-                            X = matrix_add(s[i], X)
-                            # insert the swap gate into the gate sequence
-                            s1 = GateInfo(node.op.name, [C[j][1][i][0], C[j][1][i][1]], S[j].var1)
-                            all_gates.append(s1)
-                            s2 = GateInfo(node.op.name, [C[j][1][i][1], C[j][1][i][0]], S[j].var1)
-                            all_gates.append(s2)
-                            all_gates.append(s1)
-
-                        build_unique_constraints(X, constraints, param)
-                        # one of the path: the qubits node.qargs mapped to the adjacent qubits S[j].edge,
-                        # Only one path of all paths is true sum(v1s)==1
-                        constraints.append(
-                            X[S[j].edge[0]][node.qargs[0].index] + X[S[j].edge[1]][node.qargs[1].index] == S[j].var1)
-                        all_gates.append(GateInfo(node.op.name, [S[j].edge[0], S[j].edge[1]], S[j].var1))
-                        R.append(X)
-            else:
-                nodes = L2PP(X, node.qargs[0].index, param, constraints)
-                all_gates.append(GateInfo(node.op.name, nodes[0], nodes[1]))
+        # the mapping result of each path P
         if len(node.qargs) == 2:
-            v1 = 0
-            for v in ve1:
-                v1 += v
-            constraints.append(v1 == param)
-            vars.extend(ve1)
-            v1 = 0
-            for v in ve2:
-                v1 += v
-            constraints.append(v1 == param)
-            vars.extend(ve2)
-            v1 = 0
-            for v in v1s:
-                v1 += v
-            constraints.append(v1 == param)
-            P = R
-
-        # 判断边edge是否在coupling_map中存在 若edge 存在coupling的邻接矩阵A中，则A[edge[0]][edge[1]]==1
-        # insert enough swap gates to the edge in coupling map
-        # set_constraints, v3 = build_set_inter_constraint(coupling_map, len(X))
-        # e = np.hstack(edge)
-        # constraints.extend([e - np.hstack(set_constraints) == 0])
-        # constraints.extend([v3 == 1])
-
-        # g = GateInfo(node.op.name, edge)
-        # all_gates.append(g)
-    return constraints, vars, P
+            edges = generate_multi_phy_qubit(x, node.qargs)
+            limit = 6
+            for i in range(6, 300, 3):
+                paths, v1 = generate_shortest_path_list(dist, edges, node.qargs, y, coupling_map, i)
+                if len(paths) != 0:
+                    break
+            vars.extend(v1)
+            allpath.extend(paths)
+            path_cst = 0
+            P = list()
+            for i in range(len(paths)):
+                x1 = matrix_deepcopy(x)
+                y1 = matrix_deepcopy(y)
+                # f = mod(paths[i].vars)
+                v1 = 0
+                for v in paths[i].vars:
+                    v1 += v
+                v1 = v1 / len(paths[i].vars)
+                path_cst += v1
+                weight = 1  # 无需交换的权重
+                for j in range(len(paths[i].path)):
+                    weight += gate_info(GateInfo('cx', paths[i].path[j]), "gate_error", arch)
+                    # weight += 1
+                    x1, y1 = matrix_row_swap(paths[i].path[j], x1, y1)
+                obj += weight * v1
+                x1, y1 = matrix_add_var(x1, y1, v1, paths[i].vars)
+                P.append([x1, y1])
+            # Only one path of all paths is true sum(v1s)==1
+            x1 = P[0][0]
+            y1 = P[0][1]
+            for i in range(1, len(P)):
+                x1, y1 = matrix_add(x1, y1, P[i][0], P[i][1])
+            constraints.append(path_cst == param)
+        else:
+            # todo single qubit
+            pass
+    # build_unique_constraints(x1, constraints, param)
+    return constraints, vars, obj, allpath
 
 
 # 构造coupling的邻接矩阵有边相邻则为1
@@ -518,12 +509,13 @@ def gate_info(g: GateInfo, name: string, arch: string):
     conf, prop = configuration(arch)
     for gate in prop.gates:
         if gate.gate == g.name:
-            if len(set(gate.qubits).intersection(set(g.qargs)))==len(g.qargs):
+            if len(set(gate.qubits).intersection(set(g.qargs))) == len(g.qargs):
                 for p in gate.parameters:
                     if p.name == name:
                         return p.value
                     elif p.name == name:
                         return p.value
+    pass
 
 
 # 将插入SWAP的矩阵转化为SWAP依次插入的位置list
@@ -644,7 +636,7 @@ def generate_degree_mapping(M_P, assign, ini, e1, e2, D_P, D_L):
                     if is_not_location(ini, j) and is_logical_not_location(ini, e1):
                         index = j
     if index == -1:
-        print("------", index)
+        print("*******", index)
     ini[index][e1] = 1
     assign.add(e1)
 
@@ -669,13 +661,12 @@ def map_dag_degree(dag: DAGCircuit, assign, queue, M_P, ini, D_P, D_L):
             continue
         if len(node.qargs) == 2:
             queue.extend([node.qargs[0].index, node.qargs[1].index])
-            if {node.qargs[0].index, node.qargs[1].index}.isdisjoint(assign):
+            if len({node.qargs[0].index, node.qargs[1].index} & (assign)) == 0:
                 continue
 
         while len(queue) > 0:
             e1 = queue.pop()
             e2 = queue.pop()
-            print(e1, e2, assign)
             # if e1 and e2 are not in assigin, they are entered into the queue
             # if e1 and e2 are in assigin, skip them
             # if either e1 or e2 in assigin, we map the unmapped node
@@ -691,7 +682,6 @@ def map_dag_degree(dag: DAGCircuit, assign, queue, M_P, ini, D_P, D_L):
     while len(queue) > 0:
         e1 = queue.pop()
         e2 = queue.pop()
-        print(e1, e2, assign)
         # if e1 and e2 are not in assigin, they are entered into the queue
         # if e1 and e2 are in assigin, skip them
         # if either e1 or e2 in assigin, we map the unmapped node
@@ -736,7 +726,7 @@ def map_IG_degree(IG: list, assign, assign1, queue, M_P, ini, D_P, D_L):
             if is_logical_not_location(ini, ig[0]):
                 map_single_qubit(M_P, ig[0], ini, assign)
             continue
-        if ({ig[0], ig[1]}.isdisjoint(assign) and {ig[0], ig[1]}.isdisjoint(assign1)):
+        if (len({ig[0], ig[1]} & (assign)) == 0 and len({ig[0], ig[1]} & (assign1)) == 0):
             queue.extend(ig)
             continue
         while len(queue) > 0:
@@ -791,25 +781,25 @@ def generate_ini_mapping_by_degree(coupling_map, dag: DAGCircuit, IG: list, n: i
     for j in range(len(M_P[L2P(ini, index)])):
         if M_P[L2P(ini, index)][j] != 0 and is_not_location(ini, j):
             map_IG_degree(IG, {j}, assign, queue, M_P, ini, D_P, D_L)
+
     return ini
 
 
 # gate basis: ['id', 'rz', 'sx', 'x', 'cx', 'reset']
-def SDP_tools(X: list, dag: DAGCircuit, IG: list, arch: string):
+def SDP_tools(x: list, dag: DAGCircuit, IG: list, arch: string):
     conf, prop = configuration(arch)
     cm = CouplingMap(conf.coupling_map)
     # g_l = gate_info(g, "gate_length", arch)
     phy_deg, am = degree_adjcent_matrix(conf.coupling_map, len(cm.physical_qubits))
     # variables of the initial mapping
-    if len(X) == 0:
-        X = generate_ini_mapping_by_degree(conf.coupling_map, dag, IG, len(cm.physical_qubits))
-        # X = generate_int_variables(len(cm.physical_qubits))
+    if len(x) == 0:
+        x = generate_ini_mapping_by_degree(conf.coupling_map, dag, IG, len(cm.physical_qubits))
+        # x = generate_int_variables(len(cm.physical_qubits))
     # vars: the variables of Swaps and identity matrices
     # v1: the variables of Swaps
-    param = cp.Parameter()
-    cst, vars, P = build_constraint([[X, []]], conf.coupling_map, dag, param)
-
-    obj = objective_function(P, prop.gates, cst, vars, param=param)
+    param = cp.Parameter(integer=True)
+    y = [[set() for i in range(len(x))] for j in range(len(x))]
+    cst, vars, obj, allpath = build_constraint(x, y, conf.coupling_map, dag, param)
     param.value = 1
     prob = cp.Problem(cp.Minimize(obj), cst)
     print(prob)
@@ -819,8 +809,11 @@ def SDP_tools(X: list, dag: DAGCircuit, IG: list, arch: string):
     print("status:", prob.status)
     print("optimal value", prob.value)
     print("optimal var:")
-    # for g in all_gates:
-    #     print(g.var, end=', ')
+    for i in range(len(allpath)):
+        print(allpath[i].path, end=':')
+        for j in allpath[i].vars:
+            print(j.value, end=',')
+        print()
     pass
 
 
@@ -863,7 +856,7 @@ def generate_eye_list(n: int):
 # generate the swap sequence
 # todo prune
 # C：the candidates list
-def generate_variables_matrix(n: int, C: list, v):
+def generate_path_variables(n: int, C: list, x):
     res = list()
     v1 = generate_boolean_variables(len(C))
     v2 = generate_boolean_variables(len(C))
@@ -888,11 +881,14 @@ if __name__ == '__main__':
     for path in files:
         print(count, path)
         count += 1
-        IG, dags = read_open_qasm("./nam_u/" + path, path)
-        arch = "tokyo"
-        for i in range(len(dags)):
-            SDP_tools([], dags[i], IG, arch)
-
+        if count < 6:
+            continue
+        arch = "manhattan"
+        dag, IG = read_open_qasm("./nam_u/" + path, path)
+        SDP_tools([], dag, IG, arch)
+        # for i in range(len(dags)):
+        #     SDP_tools([], dags[i], IG, arch)
+        pass
 # Create two scalar optimization variables.
 # Solving a problem with different solvers.
 # print(installed_solvers())
@@ -908,3 +904,26 @@ if __name__ == '__main__':
 # # Solve with SCIP.
 # prob.solve(solver=cp.GLPK_MI)
 # print("optimal value with SCIP:", prob.value)
+
+
+# v = cp.Variable(boolean=True)
+# v1 = cp.Variable(boolean=True)
+# v2 = cp.Variable(boolean=True)
+# para = cp.Parameter()
+# para.value = 1
+# c_1 = cp.Parameter()
+# c_1.value = 1
+# num = cp.Parameter()
+# num.value = 2
+# num1 = cp.Parameter()
+# num1.value = 3
+# prob = cp.Problem(cp.Minimize((c_1 * v) + (num * v2) + (num1 * v1)),
+#                   [((c_1 * v) / num) + ((c_1 * v1) / num) + ((c_1 * v2) / num) == c_1,
+#                    v + v1 + v2 == c_1])
+# print(prob)
+#
+# print("isdcp: ", prob.objective.is_dcp())
+# prob.solve(verbose=True)  # Returns the optimal value.
+# print("status:", prob.status)
+# print("optimal value", prob.value)
+# print("optimal var:")
