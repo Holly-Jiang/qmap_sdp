@@ -856,22 +856,22 @@ def generate_eye_list(n: int):
 # generate the swap sequence
 # todo prune
 # C：the candidates list
-def generate_path_variables(n: int, C: list, x):
-    res = list()
-    v1 = generate_boolean_variables(len(C))
-    v2 = generate_boolean_variables(len(C))
-    for j in range(len(C)):
-        m = list()
-        for i in range(len(C[j][1])):
-            matrix = generate_eye_list(n)
-            matrix[C[j][1][i][0]][C[j][1][i][1]] = v1[j] * v
-            matrix[C[j][1][i][1]][C[j][1][i][0]] = v1[j] * v
-            matrix[C[j][1][i][0]][C[j][1][i][0]] = v2[j]
-            matrix[C[j][1][i][1]][C[j][1][i][1]] = v2[j]
-            m.append(matrix)
-        # [the mapped edge, the swap matrix sequence, the swap variables, the identity variables]
-        res.append(SwapInfo(C[j][0], m, v1[j], v2[j]))
-    return res
+# def generate_path_variables(n: int, C: list, x):
+#     res = list()
+#     v1 = generate_boolean_variables(len(C))
+#     v2 = generate_boolean_variables(len(C))
+#     for j in range(len(C)):
+#         m = list()
+#         for i in range(len(C[j][1])):
+#             matrix = generate_eye_list(n)
+#             matrix[C[j][1][i][0]][C[j][1][i][1]] = v1[j] * v
+#             matrix[C[j][1][i][1]][C[j][1][i][0]] = v1[j] * v
+#             matrix[C[j][1][i][0]][C[j][1][i][0]] = v2[j]
+#             matrix[C[j][1][i][1]][C[j][1][i][1]] = v2[j]
+#             m.append(matrix)
+#         # [the mapped edge, the swap matrix sequence, the swap variables, the identity variables]
+#         res.append(SwapInfo(C[j][0], m, v1[j], v2[j]))
+#     return res
 
 
 if __name__ == '__main__':
