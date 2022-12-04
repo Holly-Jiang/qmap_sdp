@@ -58,6 +58,7 @@ def read_open_qasm(path: string, filename) -> QuantumCircuit:
     IG = list()
     for node in dag.topological_op_nodes():
         if len(node.qargs) == 2:
+            print('[%d,%d]'%(node.qargs[0].index-1,node.qargs[1].index-1) ,end=';')
             for ig in IG:
                 if node.qargs[0].index in ig and node.qargs[1].index in ig:
                     continue

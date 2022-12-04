@@ -799,6 +799,11 @@ def SDP_tools(x: list, dag: DAGCircuit, IG: list, arch: string):
     # v1: the variables of Swaps
     param = cp.Parameter(integer=True)
     y = [[set() for i in range(len(x))] for j in range(len(x))]
+    gates = list()
+    for node in dag.topological_op_nodes():
+        if len(node.qargs) == 2:
+            gates.append([node.qargs[0].index, node.qargs[1].index])
+
     cst, vars, obj, allpath = build_constraint(x, y, conf.coupling_map, dag, param)
     param.value = 1
     prob = cp.Problem(cp.Minimize(obj), cst)
