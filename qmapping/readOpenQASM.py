@@ -2,19 +2,19 @@ import os
 import string
 from os import listdir
 
-import retworkx as rx
-import networkx as nx
-from networkx.classes.graphviews import generic_graph_view
-from networkx.drawing.nx_agraph import view_pygraphviz
-from qiskit import QuantumCircuit, QuantumRegister
-from qiskit.circuit import Instruction, Qubit
+from qiskit import QuantumCircuit
 from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGCircuit, DAGOpNode, DAGInNode
-from qiskit.providers.fake_provider import FakeAlmaden, FakeSydney, FakeManhattan, FakeTokyo
+from qiskit.providers.fake_provider import FakeSydney, FakeManhattan, FakeTokyo
 from qiskit.transpiler import CouplingMap
-from dagDrawer import dag_drawer
-
-
+coupling_map = [[0, 1], [1, 0], [0, 5], [5, 0], [1, 2], [2, 1], [1, 6], [6, 1], [1, 7], [7, 1], [2, 3], [3, 2], [2, 7],
+                [7, 2], [2, 6], [6, 2], [3, 4], [4, 3], [3, 8], [8, 3], [3, 9], [9, 3], [4, 9], [9, 4], [4, 8], [8, 4],
+                [5, 6], [6, 5], [5, 10], [10, 5], [5, 11], [11, 5], [6, 7], [7, 6], [6, 11], [11, 6], [6, 10], [10, 6],
+                [7, 8], [8, 7], [7, 12], [12, 7], [7, 13], [13, 7], [8, 9], [9, 8], [8, 13], [13, 8], [8, 12], [12, 8],
+                [9, 14], [14, 9], [10, 11], [11, 10], [10, 15], [15, 10], [11, 12], [12, 11], [11, 16], [16, 11],
+                [11, 17], [17, 11], [12, 13], [13, 12], [12, 17], [17, 12], [12, 16], [16, 12], [13, 14], [14, 13],
+                [13, 18], [18, 13], [13, 19], [19, 13], [14, 19], [19, 14], [14, 18], [18, 14], [15, 16], [16, 15],
+                [16, 17], [17, 16], [17, 18], [18, 17], [18, 19], [19, 18]]
 def makedir(filename):
     new_path = os.path.join("./subdags/", filename)
     if not os.path.isdir(new_path):
@@ -24,7 +24,7 @@ def makedir(filename):
 
 # 判断cx节点的node的两个祖先节点是否有相同的祖先节点
 # 相交则有环出现 True
-# 不相交则返回False
+# 不相交则返回 False
 def check_cycle(subdag: DAGCircuit, node: DAGOpNode) -> bool:
     if node.op.name == 'cx':
         ancestors = set()
@@ -40,29 +40,45 @@ def check_cycle(subdag: DAGCircuit, node: DAGOpNode) -> bool:
     return False
 
 
-def read_open_qasm(path: string, filename) -> QuantumCircuit:
+def get_circ(path):
     circuit = QuantumCircuit.from_qasm_file(path)
     dag = circuit_to_dag(circuit)
-    dag_drawer(dag, scale=0.7, filename="./dags/" + filename.split(".")[0] + ".png", style="color")
-    dag_qubits = set()
+    names = list()
+    qubits = list()
+    for node in dag.topological_op_nodes():
+        names.append(node.name)
+        qs = list()
+        for q in node.qargs:
+            qs.append(q.index)
+        qubits.append(qs)
+    return names, qubits
+
+
+def read_open_qasm(path: string, filename, arch) -> QuantumCircuit:
+    size = os.stat(path)
+    size = size.st_size
+    if size > 30000:
+        return
+
+    circuit = QuantumCircuit.from_qasm_file(path)
+    dag = circuit_to_dag(circuit)
+
+    # print('}')
+    # dag_drawer(dag, scale=0.7, filename="./dags/" + filename.split(".")[0] + ".png", style="color")
     all_qubits = list()
-    arch = "manhattan"
     conf, prop = configuration(arch)
     cm = CouplingMap(conf.coupling_map)
-    for q in dag.qubits:
-        dag_qubits.add(q.index)
     for i in range(len(cm.physical_qubits)):
-        if not i in dag_qubits:
-            all_qubits.append([i])
+        all_qubits.append([i])
     # construct the fisrt interaction graph
     IG = list()
     for node in dag.topological_op_nodes():
         if len(node.qargs) == 2:
-            print('[%d,%d]'%(node.qargs[0].index-1,node.qargs[1].index-1) ,end=';')
             for ig in IG:
                 if node.qargs[0].index in ig and node.qargs[1].index in ig:
                     continue
             IG.append([node.qargs[0].index, node.qargs[1].index])
+
     for node in dag.topological_op_nodes():
         if len(node.qargs) == 1:
             for ig in IG:
@@ -70,11 +86,30 @@ def read_open_qasm(path: string, filename) -> QuantumCircuit:
                     continue
             IG.append([node.qargs[0].index])
     IG.extend(all_qubits)
-    # dags = circuit_partition(dag, filename)
-    # # print(dag.to_networkx())
+    dags = circuit_partition(dag, filename)
+    gates = list()
+    # print('{', end='')
+
+    names = list()
+    qubits = list()
+    for d in dags:
+        gs = []
+        # print('[', end='')
+        for n in d.topological_op_nodes():
+            if len(n.qargs) == 2:
+                gs.append([n.qargs[0].index, n.qargs[1].index])
+                # print('%d %d' % (n.qargs[0].index, n.qargs[1].index), end=';')
+            names.append(n.name)
+            qs = list()
+            for q in n.qargs:
+                qs.append(q.index)
+            qubits.append(qs)
+        # print(']')
+        gates.append(gs)
+    # print(dag.to_networkx())
     # generic_graph_view(dag.to_networkx())
     # print(circuit_drawer(circuit))
-    return dag, IG
+    return dags, IG, gates, names, qubits
 
 
 def count_iterable(i):
@@ -90,7 +125,6 @@ def remove_ancestors(dag: DAGCircuit, revisited_nodes):
 # 将电路根据拓扑排序遍历DAG，然后根据电路中是否出现环进行划分
 def circuit_partition(dag: DAGCircuit, filename):
     dag_node_count = dag.node_counter
-    print("dag_node:", dag_node_count)
     edge_count = 0
     node_count = 0
     sub_node_count = 0
@@ -123,7 +157,7 @@ def circuit_partition(dag: DAGCircuit, filename):
                 sub_node_count += len(revisited_nodes)
                 remove_ancestors(dag, revisited_nodes)
                 del_nodes.update(revisited_nodes)
-                dag_drawer(subdag, scale=0.7, filename=makedir(filename) + "/" + str(len(dags)) + ".png", style="color")
+                # dag_drawer(subdag, scale=0.7, filename=makedir(filename) + "/" + str(len(dags)) + ".png", style="color")
                 subdag = DAGCircuit()
                 subdag.metadata = dag.metadata
                 edge_count = 0
@@ -131,10 +165,9 @@ def circuit_partition(dag: DAGCircuit, filename):
                 revisited_nodes = set()
                 continue
 
-    dag_drawer(subdag, scale=0.7, filename=makedir(filename) + "/" + str(len(dags)) + ".png", style="color")
+    # dag_drawer(subdag, scale=0.7, filename=makedir(filename) + "/" + str(len(dags)) + ".png", style="color")
     dags.append(subdag)
     sub_node_count += len(revisited_nodes)
-    print("subdag node:", sub_node_count, dag_node_count - sub_node_count)
     # if dag_node_count - sub_node_count - 48 != 0:
     #     exit(-999999)
     return dags
@@ -163,7 +196,7 @@ def degree_adjcent_matrix(cm: list, n: int):
     for e in cm:
         matrix[e[0]][e[1]] += 1
         deg[e[0]] += 1
-        deg[e[1]] += 1
+        # deg[e[1]] += 1 双向仅计算出度
     return deg, matrix
 
 
@@ -179,15 +212,17 @@ def initial_mapping(dag: DAGCircuit):
 
 
 if __name__ == '__main__':
+    dirstr = '/home/jianghui/data/'
     # read_open_qasm("./test.qasm", "111")
     # read_open_qasm("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/4gt4-v0_72.qasm", "4gt4-v0_72.qasm")
-    files = listdir("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/")
+    files = listdir(dirstr)
     files = sorted(files)
     count = 0
+    arch = "tokyo"
     for path in files:
         print("the %d-th circuit: %s" % (count, path))
         count += 1
-        dags = read_open_qasm("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/" + path, path)
+        dags = read_open_qasm(dirstr + path, path, arch)
         pass
         # for dag in dags:
         #     initial_mapping(dag)

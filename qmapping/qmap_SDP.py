@@ -1,5 +1,6 @@
 import copy
 import string
+from collections import deque
 from os import listdir
 
 import cvxpy as cp
@@ -610,31 +611,31 @@ def objective_function(P: list, params: list, cst: list, vars: list, param):
 def generate_degree_mapping(M_P, assign, ini, e1, e2, D_P, D_L):
     if not is_logical_not_location(ini, e1):
         return
-    delta = 10
     index = -1
     p2 = L2P(ini, e2)
     k = 0
+    delta = 3
     adj = list()
     while (k < len(M_P[p2])):
         if M_P[p2][k] != 0:
-            adj.append(k)
             if is_not_location(ini, k) and is_logical_not_location(ini, e1):
+                adj.append(k)
                 if math.fabs(D_P[k] - D_L[e1]) < delta:
                     index = k
-                    delta = math.fabs(D_P[k] - D_L[e1])
+                    break
                 else:
-                    print("not math.fabs(D_P[j] - D_L[e1]) < delte")
+                    print("not math.fabs(D_P[j] - D_L[e1]) < ", delta, D_P[k], " ", D_L[e1])
+                    delta += k
         k += 1
     if index == -1:
         print("------", index)
-        for i in range(len(M_P)):
-            if is_not_location(ini, i) and not i in adj:
-                adj.append(i)
+        if len(adj) == 0:
+            for i in range(len(M_P)):
+                if is_not_location(ini, i) and not i in adj:
+                    adj.append(i)
         for i in adj:
-            for j in range(len(M_P)):
-                if M_P[i][j] == 1:
-                    if is_not_location(ini, j) and is_logical_not_location(ini, e1):
-                        index = j
+            if is_not_location(ini, i) and is_logical_not_location(ini, e1):
+                index = i
     if index == -1:
         print("*******", index)
     ini[index][e1] = 1
@@ -720,30 +721,32 @@ def map_single_qubit(M_P, q, ini, assign):
     assign.add(q)
 
 
-def map_IG_degree(IG: list, assign, assign1, queue, M_P, ini, D_P, D_L):
+def map_IG_degree(IG: list, assign, queue, M_P, ini, D_P, D_L):
     for ig in IG:
         if len(ig) == 1:
             if is_logical_not_location(ini, ig[0]):
                 map_single_qubit(M_P, ig[0], ini, assign)
             continue
-        if (len({ig[0], ig[1]} & (assign)) == 0 and len({ig[0], ig[1]} & (assign1)) == 0):
+        if len({ig[0], ig[1]} & (assign)) == 1:
             queue.extend(ig)
-            continue
-        while len(queue) > 0:
-            e1 = queue.pop()
-            e2 = queue.pop()
-            # if e1 and e2 are not in assigin, they are entered into the queue
-            # if e1 and e2 are in assigin, skip them
-            # if either e1 or e2 in assigin, we map the unmapped node
-            if e1 not in assign and e2 not in assign:
-                pass  # todo
-            elif e1 in assign and e2 in assign:
-                continue
-            else:
-                if e1 not in assign:
-                    generate_degree_mapping(M_P, assign, ini, e1, e2, D_P, D_L)
+            while len(queue) > 0:
+                e1 = queue.pop()
+                e2 = queue.pop()
+                # if e1 and e2 are not in assigin, they are entered into the queue
+                # if e1 and e2 are in assigin, skip them
+                # if either e1 or e2 in assigin, we map the unmapped node
+                if e1 not in assign and e2 not in assign:
+                    pass  # todo
+                elif e1 in assign and e2 in assign:
+                    continue
                 else:
-                    generate_degree_mapping(M_P, assign, ini, e2, e1, D_P, D_L)
+                    if e1 not in assign:
+                        generate_degree_mapping(M_P, assign, ini, e1, e2, D_P, D_L)
+                    else:
+                        generate_degree_mapping(M_P, assign, ini, e2, e1, D_P, D_L)
+        elif len({ig[0], ig[1]} & (assign)) == 0:
+            queue.extend(ig)
+    pass
 
 
 def generate_ini_mapping_by_degree(coupling_map, dag: DAGCircuit, IG: list, n: int):
@@ -761,26 +764,28 @@ def generate_ini_mapping_by_degree(coupling_map, dag: DAGCircuit, IG: list, n: i
     for j in range(len(D_P)):
         if D_P[j] > d_max:
             d_p_index = j
+            d_max = D_P[j]
     d_max = 0
     d_l_index = -1
     for j in range(len(D_L)):
         if D_L[j] > d_max:
             d_l_index = j
+            d_max = D_L[j]
     ini[d_p_index][d_l_index] = 1
     assign.add(d_l_index)
-    queue = list()
+    queue = deque()
     map_dag_degree(dag, assign, queue, M_P, ini, D_P, D_L)
     # the unmapped node:
     # map them to  the neighbor of the mapped node with minimal degree
-    d = 10
-    index = -1
-    for j in assign:
-        if D_L[j] < d:
-            d = D_L[j]
-            index = j
-    for j in range(len(M_P[L2P(ini, index)])):
-        if M_P[L2P(ini, index)][j] != 0 and is_not_location(ini, j):
-            map_IG_degree(IG, {j}, assign, queue, M_P, ini, D_P, D_L)
+    # d = 10
+    # index = -1
+    # for j in assign:
+    #     if D_L[j] < d:
+    #         d = D_L[j]
+    #         index = j
+    # for j in range(len(M_P[L2P(ini, index)])):
+    #     if M_P[L2P(ini, index)][j] != 0 and is_not_location(ini, j):
+    map_IG_degree(IG, assign, queue, M_P, ini, D_P, D_L)
 
     return ini
 
@@ -791,35 +796,58 @@ def SDP_tools(x: list, dag: DAGCircuit, IG: list, arch: string):
     cm = CouplingMap(conf.coupling_map)
     # g_l = gate_info(g, "gate_length", arch)
     phy_deg, am = degree_adjcent_matrix(conf.coupling_map, len(cm.physical_qubits))
+    print('[', end='')
+    for i in am:
+        for j in i:
+            print(j, end=',')
+        print(';')
+    print("]")
+
+    print('[', end='')
+    for i in range(len(am)):
+        for j in range(len(am[i])):
+            if am[i][j] != 0:
+                g = GateInfo('cx', [i, j])
+                print(round(1 - gate_info(g, 'gate_error', arch), 3), end=',')
+            else:
+                print(0, end=',')
+        print(';')
+    print("]")
     # variables of the initial mapping
     if len(x) == 0:
         x = generate_ini_mapping_by_degree(conf.coupling_map, dag, IG, len(cm.physical_qubits))
         # x = generate_int_variables(len(cm.physical_qubits))
     # vars: the variables of Swaps and identity matrices
     # v1: the variables of Swaps
-    param = cp.Parameter(integer=True)
-    y = [[set() for i in range(len(x))] for j in range(len(x))]
-    gates = list()
-    for node in dag.topological_op_nodes():
-        if len(node.qargs) == 2:
-            gates.append([node.qargs[0].index, node.qargs[1].index])
-
-    cst, vars, obj, allpath = build_constraint(x, y, conf.coupling_map, dag, param)
-    param.value = 1
-    prob = cp.Problem(cp.Minimize(obj), cst)
-    print(prob)
-
-    print("----------", prob.objective.is_dcp())
-    prob.solve(solver=cp.GLPK_MI, verbose=True)  # Returns the optimal value.
-    print("status:", prob.status)
-    print("optimal value", prob.value)
-    print("optimal var:")
-    for i in range(len(allpath)):
-        print(allpath[i].path, end=':')
-        for j in allpath[i].vars:
-            print(j.value, end=',')
-        print()
-    pass
+    print('[', end='')
+    for i in x:
+        for j in i:
+            print(j, end=',')
+        print(';')
+    print(']')
+    # param = cp.Parameter(integer=True)
+    # y = [[set() for i in range(len(x))] for j in range(len(x))]
+    # gates = list()
+    # for node in dag.topological_op_nodes():
+    #     if len(node.qargs) == 2:
+    #         gates.append([node.qargs[0].index, node.qargs[1].index])
+    #
+    # cst, vars, obj, allpath = build_constraint(x, y, conf.coupling_map, dag, param)
+    # param.value = 1
+    # prob = cp.Problem(cp.Minimize(obj), cst)
+    # print(prob)
+    #
+    # print("----------", prob.objective.is_dcp())
+    # prob.solve(solver=cp.GLPK_MI, verbose=True)  # Returns the optimal value.
+    # print("status:", prob.status)
+    # print("optimal value", prob.value)
+    # print("optimal var:")
+    # for i in range(len(allpath)):
+    #     print(allpath[i].path, end=':')
+    #     for j in allpath[i].vars:
+    #         print(j.value, end=',')
+    #     print()
+    return x
 
 
 def generate_swap_matrices(n: int, coupling_map: list):
@@ -878,9 +906,8 @@ def generate_eye_list(n: int):
 #         res.append(SwapInfo(C[j][0], m, v1[j], v2[j]))
 #     return res
 
-
-if __name__ == '__main__':
-    files = listdir("./nam_u/")
+def func():
+    files = listdir("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/")
     files = sorted(files)
     count = 0
     for path in files:
@@ -888,11 +915,33 @@ if __name__ == '__main__':
         count += 1
         if count < 6:
             continue
-        arch = "manhattan"
-        dag, IG = read_open_qasm("./nam_u/" + path, path)
-        SDP_tools([], dag, IG, arch)
-        # for i in range(len(dags)):
-        #     SDP_tools([], dags[i], IG, arch)
+        arch = "tokyo"
+        dags, IG = read_open_qasm("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/" + path, path,
+                                  arch)
+
+        # SDP_tools([], dags, IG, arch)
+        inimap = []
+        inimap = SDP_tools(inimap, dags[0], IG, arch)
+        return inimap
+
+
+if __name__ == '__main__':
+    files = listdir("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/")
+    files = sorted(files)
+    count = 0
+    for path in files:
+        print(count, path)
+        count += 1
+        if count < 86:
+            continue
+        arch = "tokyo"
+        dags, IG = read_open_qasm("/Users/jiangqianxi/Desktop/github/TSA/tsa/src/main/resources/data/" + path, path,
+                                  arch)
+
+        # SDP_tools([], dags, IG, arch)
+        inimap = []
+        for i in range(len(dags)):
+            SDP_tools(inimap, dags[i], IG, arch)
         pass
 # Create two scalar optimization variables.
 # Solving a problem with different solvers.
